@@ -1,0 +1,29 @@
+{% macro workflow_icon(wf) -%}
+{% if wf.status == "success" %}<i class="fa-solid fa-check status-icon status-icon-success"></i>
+{% elif wf.status == "failure" %}<i class="fa-solid fa-xmark status-icon status-icon-failure"></i>
+{% elif wf.status == "pending" %}<i class="fa-solid fa-clock status-icon status-icon-pending"></i>
+{% else %}<i class="fa-solid fa-minus status-icon status-icon-unknown"></i>{% endif %}
+{%- endmacro %}
+
+{% macro workflow_row(wf) -%}
+<div class="flex items-center gap-2 py-0.5">
+    <a href="{{ wf.run_url or wf.url }}" target="_blank" rel="noopener" class="flex items-center gap-2 hover:opacity-80">
+        {{ workflow_icon(wf) }}
+        <span class="text-sm">{{ wf.name }}</span>
+    </a>
+    <span class="text-xs opacity-40">{{ wf.status }}</span>
+</div>
+{%- endmacro %}
+
+{% macro workflow_summary(workflows) -%}
+{%- set failing = workflows | selectattr("status", "equalto", "failure") | list | length -%}
+{%- set pending = workflows | selectattr("status", "equalto", "pending") | list | length -%}
+{%- set passing = (workflows | length) - failing - pending -%}
+<span class="flex items-center gap-2 text-sm font-mono-nums">
+    {%- if passing %}<span class="text-success"><i class="fa-solid fa-check status-icon status-icon-success"></i> {{ passing }} passing</span>{% endif -%}
+    {%- if passing and pending %}<span class="opacity-40 mx-0.5">·</span>{% endif -%}
+    {%- if pending %}<span class="text-warning"><i class="fa-solid fa-clock status-icon status-icon-pending"></i> {{ pending }} pending</span>{% endif -%}
+    {%- if (passing or pending) and failing %}<span class="opacity-40 mx-0.5">·</span>{% endif -%}
+    {%- if failing %}<span class="text-error"><i class="fa-solid fa-xmark status-icon status-icon-failure"></i> {{ failing }} failing</span>{% endif -%}
+</span>
+{%- endmacro %}
