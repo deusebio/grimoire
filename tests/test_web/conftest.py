@@ -59,9 +59,10 @@ def _populate_cache() -> None:
                     name="Nightly",
                     branch="main",
                     status="success",
-                    url="https://github.com/acme/api/actions",
+                    url="https://github.com/acme/api/actions/workflows/nightly.yaml?query=event%3Aschedule",
                     run_url="https://github.com/acme/api/actions/runs/2",
                     kind="scheduled",
+                    success_rate=0.75,
                 ),
             ],
             stale_issue_items=[

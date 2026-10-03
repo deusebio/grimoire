@@ -31,6 +31,7 @@ class WorkflowStatus(BaseModel):
     url: str
     run_url: str = ""
     kind: str = "release"  # "scheduled" (event=schedule) | "release" (event=push)
+    success_rate: float | None = None  # scheduled only: succeeded/completed runs in window
 
 
 class IssueDetail(BaseModel):

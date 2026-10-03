@@ -1,4 +1,4 @@
-{% from "partials/_workflow_macros.html" import workflow_row %}
+{% from "partials/_workflow_macros.html" import workflow_row, scheduled_row %}
 <div class="flex flex-col gap-3">
 {% for repo in repos %}
 <div class="bg-base-100 rounded-lg shadow-sm hover:shadow-md transition-shadow {% if repo.health_status == 'error' %}border-l-4 border-error{% elif repo.health_status == 'warning' %}border-l-4 border-warning{% endif %}">
@@ -60,7 +60,7 @@
                 {% if repo.scheduled_workflows %}
                 <div class="text-xs font-semibold opacity-50 uppercase tracking-wider mb-1">Scheduled</div>
                 {% for wf in repo.scheduled_workflows %}
-                {{ workflow_row(wf) }}
+                {{ scheduled_row(wf) }}
                 {% endfor %}
                 {% endif %}
             </div>

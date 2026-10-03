@@ -115,7 +115,7 @@ Returns the `partials/loading_progress.html` template with current `RefreshProgr
 | **Pull Requests** | Open count + stale count, e.g., `5 (1 stale)` | ✓ (by open, by stale) |
 | **Last Activity** | Time since last commit across observed branches, e.g., `3d ago` | ✓ (by last commit time) |
 | **Branches** | Total count + stale count with link to GitHub branches page | — |
-| **Scheduled** | Compact badge grid of scheduled workflows on the default branch (see below) | — |
+| **Scheduled** | One `Name: NN%` label per scheduled workflow on the default branch (30-day success rate, links to the scheduled-runs list on GitHub; green at 100%, yellow ≥50%, red otherwise, `n/a` if no completed runs) | — |
 | **Release** | Compact badge grid of push-triggered workflows per tracked branch (see below) | — |
 
 ### View Switcher

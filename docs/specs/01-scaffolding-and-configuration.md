@@ -163,6 +163,7 @@ class WorkflowStatus(BaseModel):
     url: str
     run_url: str = ""
     kind: str = "release"   # "scheduled" (event=schedule) | "release" (event=push)
+    success_rate: float | None = None  # scheduled only: succeeded/completed runs in last 30 days
 
 class RepositoryStats(BaseModel):
     full_name: str

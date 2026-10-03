@@ -40,6 +40,7 @@ class WorkflowStatusResponse(BaseModel):
     url: str
     run_url: str = ""
     kind: str = "release"
+    success_rate: float | None = None
 
 
 class RepoSummary(BaseModel):

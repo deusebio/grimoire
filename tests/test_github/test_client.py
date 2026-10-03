@@ -322,6 +322,25 @@ async def test_get_workflow_runs_with_event(client: GitHubClient) -> None:
 
 
 @respx.mock
+async def test_count_workflow_runs(client: GitHubClient) -> None:
+    route = respx.get("https://api.github.com/repos/owner/repo/actions/workflows/1/runs").mock(
+        return_value=httpx.Response(
+            200,
+            json={"total_count": 7, "workflow_runs": [{"id": 1}]},
+            headers={"X-RateLimit-Remaining": "4999", "X-RateLimit-Limit": "5000"},
+        )
+    )
+    count = await client.count_workflow_runs(
+        "owner/repo", 1, branch="main", event="schedule", status="success", created=">=2026-09-03"
+    )
+    assert count == 7
+    params = route.calls[0].request.url.params
+    assert params["status"] == "success"
+    assert params["created"] == ">=2026-09-03"
+    assert params["per_page"] == "1"
+
+
+@respx.mock
 async def test_get_workflow_runs_no_etag_caching(client: GitHubClient) -> None:
     """Workflow runs must not use ETag caching so status transitions are always visible."""
     route = respx.get("https://api.github.com/repos/owner/repo/actions/workflows/1/runs")

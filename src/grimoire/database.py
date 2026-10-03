@@ -172,6 +172,7 @@ class CachedWorkflowStatus(SQLModel, table=True):
     url: str = ""
     run_url: str = ""
     kind: str = "release"  # "scheduled" | "release"
+    success_rate: float | None = None
     fetched_at: datetime = Field(default_factory=_utcnow)
 
 

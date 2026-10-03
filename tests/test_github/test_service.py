@@ -533,7 +533,14 @@ def _mock_repo_endpoints(branches: list[str]) -> None:
             200,
             json={
                 "total_count": 1,
-                "workflows": [{"id": 42, "name": "CI", "html_url": "https://github.com/wf"}],
+                "workflows": [
+                    {
+                        "id": 42,
+                        "name": "CI",
+                        "path": ".github/workflows/ci.yaml",
+                        "html_url": "https://github.com/wf",
+                    }
+                ],
             },
             headers=_rl_headers(),
         )
@@ -593,17 +600,57 @@ async def test_workflow_runs_split_by_event(client: GitHubClient) -> None:
 
 
 @respx.mock
-async def test_workflow_runs_inactive_are_excluded(client: GitHubClient) -> None:
-    """Workflows whose latest qualifying run is older than 30 days are hidden."""
+async def test_scheduled_success_rate_and_runs_url(client: GitHubClient) -> None:
+    """Scheduled workflows report succeeded/completed runs and link to the scheduled runs list."""
     _mock_repo_endpoints(["main"])
+
+    def _side_effect(request: httpx.Request) -> httpx.Response:
+        params = request.url.params
+        if params.get("event") != "schedule":
+            return _runs_response([])
+        if params.get("status") == "completed":
+            assert params["created"].startswith(">=")
+            return httpx.Response(200, json={"total_count": 4, "workflow_runs": []})
+        if params.get("status") == "success":
+            return httpx.Response(200, json={"total_count": 3, "workflow_runs": []})
+        return _runs_response([_run(1, "failure", 1)])
+
     respx.get("https://api.github.com/repos/owner/repo1/actions/workflows/42/runs").mock(
-        return_value=_runs_response([_run(1, "failure", WORKFLOW_ACTIVE_DAYS + 1)])
+        side_effect=_side_effect
     )
 
     repo = TrackedRepository(full_name="owner/repo1", default_branch="main", branches=["main"])
     stats = await fetch_repository_stats(repo, client, StalenessConfig())
 
+    assert len(stats.workflows) == 1
+    wf = stats.workflows[0]
+    assert wf.kind == "scheduled"
+    assert wf.success_rate == 0.75
+    assert wf.url == (
+        "https://github.com/owner/repo1/actions/workflows/ci.yaml?query=event%3Aschedule"
+    )
+
+
+@respx.mock
+async def test_workflow_runs_inactive_are_excluded(client: GitHubClient) -> None:
+    """Run queries are bounded to the activity window; no runs in it hides the workflow."""
+    _mock_repo_endpoints(["main"])
+    cutoff = (datetime.now(UTC) - timedelta(days=WORKFLOW_ACTIVE_DAYS)).date().isoformat()
+
+    def _side_effect(request: httpx.Request) -> httpx.Response:
+        # Emulate GitHub's server-side `created` filter.
+        if request.url.params.get("created") == f">={cutoff}":
+            return _runs_response([])
+        return _runs_response([_run(1, "failure", WORKFLOW_ACTIVE_DAYS + 1)])
+
+    route = respx.get("https://api.github.com/repos/owner/repo1/actions/workflows/42/runs")
+    route.side_effect = _side_effect
+
+    repo = TrackedRepository(full_name="owner/repo1", default_branch="main", branches=["main"])
+    stats = await fetch_repository_stats(repo, client, StalenessConfig())
+
     assert stats.workflows == []
+    assert all(c.request.url.params.get("created") == f">={cutoff}" for c in route.calls)
 
 
 @respx.mock

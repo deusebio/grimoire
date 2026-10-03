@@ -158,31 +158,60 @@ class GitHubClient:
         branch: str | None = None,
         per_page: int = 1,
         event: str | None = None,
+        created: str | None = None,
     ) -> list[dict[str, Any]] | None:
         """Return the latest run(s) for a workflow.
 
-        *branch* filters on the run's ``head_branch`` and *event* on the
-        triggering event (e.g. ``schedule``, ``push``), both server-side.
+        *branch* filters on the run's ``head_branch``, *event* on the
+        triggering event (e.g. ``schedule``, ``push``) and *created* on the
+        creation date (GitHub search syntax), all server-side.
         """
+        data = await self._workflow_runs_request(
+            full_name, workflow_id, per_page=per_page, branch=branch, event=event, created=created
+        )
+        if data is None:
+            return None
+        return data.get("workflow_runs", [])
+
+    async def count_workflow_runs(
+        self,
+        full_name: str,
+        workflow_id: int,
+        branch: str | None = None,
+        event: str | None = None,
+        status: str | None = None,
+        created: str | None = None,
+    ) -> int | None:
+        """Return the number of runs matching the filters (``created`` uses GitHub search syntax)."""
+        data = await self._workflow_runs_request(
+            full_name,
+            workflow_id,
+            per_page=1,
+            branch=branch,
+            event=event,
+            status=status,
+            created=created,
+        )
+        if data is None:
+            return None
+        return int(data.get("total_count", 0))
+
+    async def _workflow_runs_request(
+        self, full_name: str, workflow_id: int, per_page: int, **filters: str | None
+    ) -> dict[str, Any] | None:
         owner, repo = full_name.split("/", 1)
         params: dict[str, Any] = {"per_page": per_page}
-        if branch is not None:
-            params["branch"] = branch
-        if event is not None:
-            params["event"] = event
+        params.update({k: v for k, v in filters.items() if v is not None})
         # Skip ETag caching: a run's conclusion/status can change without the
         # run list identity changing (same run ID, updated fields).  ETag-based
         # 304 responses would hide status transitions (e.g. in_progress → success).
         # Since we fetch only a handful of results, the bandwidth cost is negligible.
-        data = await self._request(
+        return await self._request(
             "GET",
             f"/repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs",
             params=params,
             use_etag=False,
         )
-        if data is None:
-            return None
-        return data.get("workflow_runs", [])
 
     async def get_default_branch(self, full_name: str) -> str:
         data = await self.get_repo(full_name)

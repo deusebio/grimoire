@@ -307,6 +307,7 @@ async def fetch_repository_stats(
     run_queries: list[tuple[str, str, str]] = [("scheduled", "schedule", repo.default_branch)]
     run_queries += [("release", "push", b) for b in repo.branches]
     active_cutoff = now - timedelta(days=WORKFLOW_ACTIVE_DAYS)
+    created_filter = f">={active_cutoff.date().isoformat()}"
     try:
         workflows = await client.get_workflows(repo.full_name)
         if workflows is not None:
@@ -322,24 +323,31 @@ async def fetch_repository_stats(
                     ):
                         continue
                     try:
+                        # Unbounded filtered queries can return incomplete/outdated
+                        # results from GitHub, so restrict to the activity window.
                         runs = await client.get_workflow_runs(
-                            repo.full_name, wf_id, branch, event=event
+                            repo.full_name, wf_id, branch, event=event, created=created_filter
                         )
                         if runs:
                             run = runs[0]
-                            # Workflows without a recent run are considered inactive.
-                            if _run_created_at(run) < active_cutoff:
-                                continue
                             conclusion = run.get("conclusion") or "pending"
                             status_str = _map_conclusion(conclusion)
+                            url = wf.get("html_url", "")
+                            success_rate: float | None = None
+                            if kind == "scheduled":
+                                url = _scheduled_runs_url(repo.full_name, wf, url)
+                                success_rate = await _success_rate(
+                                    client, repo.full_name, wf_id, branch, created_filter
+                                )
                             workflow_statuses.append(
                                 WorkflowStatus(
                                     name=wf_name,
                                     branch=branch,
                                     status=status_str,
-                                    url=wf.get("html_url", ""),
+                                    url=url,
                                     run_url=run.get("html_url", ""),
                                     kind=kind,
+                                    success_rate=success_rate,
                                 )
                             )
                         elif runs is None:
@@ -435,9 +443,27 @@ def _parse_dt(value: str | None) -> datetime | None:
         return None
 
 
-def _run_created_at(run: dict[str, Any]) -> datetime:
-    """Return a workflow run's creation time, or epoch if missing/invalid."""
-    return _parse_dt(run.get("created_at")) or datetime.min.replace(tzinfo=UTC)
+def _scheduled_runs_url(full_name: str, wf: dict[str, Any], fallback: str) -> str:
+    """GitHub UI list of a workflow's schedule-triggered runs."""
+    path = wf.get("path") or ""
+    if not path.startswith(".github/workflows/"):
+        return fallback
+    file_name = path.rsplit("/", 1)[-1]
+    return f"https://github.com/{full_name}/actions/workflows/{file_name}?query=event%3Aschedule"
+
+
+async def _success_rate(
+    client: GitHubClient, full_name: str, wf_id: int, branch: str, created: str
+) -> float | None:
+    """Fraction of completed scheduled runs since *created* that succeeded."""
+    common = {"branch": branch, "event": "schedule", "created": created}
+    completed = await client.count_workflow_runs(full_name, wf_id, status="completed", **common)
+    if not completed:
+        return None
+    succeeded = await client.count_workflow_runs(full_name, wf_id, status="success", **common)
+    if succeeded is None:
+        return None
+    return succeeded / completed
 
 
 def _is_issue_stale(issue: dict[str, Any], cutoff: datetime) -> bool:
@@ -602,6 +628,7 @@ async def save_stats_to_db(
                         url=wf.url,
                         run_url=wf.run_url,
                         kind=wf.kind,
+                        success_rate=wf.success_rate,
                         fetched_at=stats.fetched_at or now,
                     )
                 )
@@ -681,6 +708,7 @@ async def load_stats_from_db(
                     url=w.url,
                     run_url=w.run_url,
                     kind=w.kind,
+                    success_rate=w.success_rate,
                 )
                 for w in wf_rows
             ]

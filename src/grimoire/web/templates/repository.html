@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "partials/_workflow_macros.html" import workflow_row, workflow_summary %}
+{% from "partials/_workflow_macros.html" import workflow_row, workflow_summary, scheduled_row %}
 {% block title %}{{ repo_name }} — Grimoire{% endblock %}
 {% block nav_dashboard %}active{% endblock %}
 {% block content %}
@@ -171,10 +171,10 @@
             <div>
                 <div class="flex items-center justify-between mb-2">
                     <h2 class="card-title text-lg">Scheduled</h2>
-                    {% if scheduled_workflows %}{{ workflow_summary(scheduled_workflows) }}{% endif %}
+                    <span class="text-xs opacity-50">success rate, last 30 days</span>
                 </div>
                 {% for wf in scheduled_workflows %}
-                {{ workflow_row(wf) }}
+                {{ scheduled_row(wf) }}
                 {% else %}
                 <p class="text-sm opacity-50">No active scheduled workflows.</p>
                 {% endfor %}

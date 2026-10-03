@@ -15,6 +15,22 @@
 </div>
 {%- endmacro %}
 
+{% macro success_rate_link(wf) -%}
+{%- if wf.success_rate is none -%}
+<a href="{{ wf.url }}" target="_blank" rel="noopener" class="font-mono-nums opacity-50 hover:underline">n/a</a>
+{%- else -%}
+{%- set pct = (wf.success_rate * 100) | round | int -%}
+<a href="{{ wf.url }}" target="_blank" rel="noopener"
+   class="font-mono-nums hover:underline {% if pct == 100 %}text-success{% elif pct >= 50 %}text-warning{% else %}text-error{% endif %}">{{ pct }}%</a>
+{%- endif -%}
+{%- endmacro %}
+
+{% macro scheduled_row(wf) -%}
+<div class="flex items-center gap-1 py-0.5 text-sm" title="Successful scheduled runs in the last 30 days">
+    <span>{{ wf.name }}:</span> {{ success_rate_link(wf) }}
+</div>
+{%- endmacro %}
+
 {% macro workflow_summary(workflows) -%}
 {%- set failing = workflows | selectattr("status", "equalto", "failure") | list | length -%}
 {%- set pending = workflows | selectattr("status", "equalto", "pending") | list | length -%}

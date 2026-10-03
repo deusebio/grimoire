@@ -1,4 +1,4 @@
-{% from "partials/_workflow_macros.html" import workflow_icon %}
+{% from "partials/_workflow_macros.html" import workflow_icon, scheduled_row %}
 <table class="table table-xs w-full">
     <thead>
         <tr class="text-xs uppercase tracking-wider">
@@ -72,11 +72,9 @@
 
             {# ── Scheduled ── #}
             <td class="text-center py-0.5">
-                <div class="flex items-center justify-center gap-0.5">
+                <div class="flex flex-col items-center">
                     {% for wf in repo.scheduled_workflows %}
-                    <div class="tooltip tooltip-top" data-tip="{{ wf.name }}: {{ wf.status }}">
-                        <a href="{{ wf.run_url or wf.url }}" target="_blank" rel="noopener">{{ workflow_icon(wf) }}</a>
-                    </div>
+                    {{ scheduled_row(wf) }}
                     {% endfor %}
                 </div>
             </td>

@@ -434,22 +434,26 @@ class TestCheckDisplay:
         resp = await web_client.get("/partials/dashboard-matrix?sort=name&dir=asc")
         assert ">Scheduled<" in resp.text
         assert ">Release<" in resp.text
-        assert "Nightly: success" in resp.text
+        assert "Nightly:" in resp.text
+        assert "75%" in resp.text
+        assert "nightly.yaml?query=event%3Aschedule" in resp.text
         assert "CI (main): success" in resp.text
 
     async def test_list_shows_scheduled_and_release(self, web_client: AsyncClient) -> None:
         resp = await web_client.get("/partials/dashboard-list?sort=name&dir=asc")
         assert "Scheduled" in resp.text
         assert "Release" in resp.text
-        assert "Nightly" in resp.text
+        assert "Nightly:" in resp.text
+        assert "75%" in resp.text
         assert "status-icon-failure" in resp.text
 
     async def test_repo_detail_shows_scheduled_and_release(self, web_client: AsyncClient) -> None:
         resp = await web_client.get("/repo/acme/api")
         assert "Scheduled" in resp.text
         assert "Release" in resp.text
-        assert "Nightly" in resp.text
-        assert "actions/runs/2" in resp.text
+        assert "Nightly:" in resp.text
+        assert "75%" in resp.text
+        assert "nightly.yaml?query=event%3Aschedule" in resp.text
 
     async def test_repo_detail_shows_checks(self, web_client_with_checks: AsyncClient) -> None:
         resp = await web_client_with_checks.get("/repo/acme/api")
