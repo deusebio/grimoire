@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/_workflow_macros.html" import workflow_row, workflow_summary %}
 {% block title %}{{ repo_name }} — Grimoire{% endblock %}
 {% block nav_dashboard %}active{% endblock %}
 {% block content %}
@@ -161,48 +162,40 @@
 </div>
 {% endif %}
 
-{# ── Workflows & Checks (compact two-column) ──────────────────────── #}
-{% if workflows_by_branch or checks_by_branch %}
+{# ── Scheduled, Release & Checks (compact three-column) ───────────── #}
 <div class="card bg-base-100 shadow mb-6">
     <div class="card-body">
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-x-8 gap-y-2">
 
-            {# ── Workflows Column ── #}
+            {# ── Scheduled Column ── #}
             <div>
-                {% if workflows_by_branch %}
                 <div class="flex items-center justify-between mb-2">
-                    <h2 class="card-title text-lg">Workflows</h2>
-                    <span class="flex items-center gap-2 text-sm font-mono-nums">
-                        {%- set wf_total = stats.workflows | length -%}
-                        {%- set wf_passing = wf_total - workflow_failures - workflow_pending -%}
-                        {%- if wf_passing %}<span class="text-success"><i class="fa-solid fa-check status-icon status-icon-success"></i> {{ wf_passing }} passing</span>{% endif -%}
-                        {%- if wf_passing and workflow_pending %}<span class="opacity-40 mx-0.5">·</span>{% endif -%}
-                        {%- if workflow_pending %}<span class="text-warning"><i class="fa-solid fa-clock status-icon status-icon-pending"></i> {{ workflow_pending }} pending</span>{% endif -%}
-                        {%- if (wf_passing or workflow_pending) and workflow_failures %}<span class="opacity-40 mx-0.5">·</span>{% endif -%}
-                        {%- if workflow_failures %}<span class="text-error"><i class="fa-solid fa-xmark status-icon status-icon-failure"></i> {{ workflow_failures }} failing</span>{% endif -%}
-                    </span>
+                    <h2 class="card-title text-lg">Scheduled</h2>
+                    {% if scheduled_workflows %}{{ workflow_summary(scheduled_workflows) }}{% endif %}
                 </div>
-                {% for branch, workflows in workflows_by_branch.items() %}
-                    {% if workflows_by_branch | length > 1 %}
+                {% for wf in scheduled_workflows %}
+                {{ workflow_row(wf) }}
+                {% else %}
+                <p class="text-sm opacity-50">No active scheduled workflows.</p>
+                {% endfor %}
+            </div>
+
+            {# ── Release Column ── #}
+            <div>
+                <div class="flex items-center justify-between mb-2">
+                    <h2 class="card-title text-lg">Release</h2>
+                    {% if release_by_branch %}{{ workflow_summary(release_by_branch.values() | sum(start=[])) }}{% endif %}
+                </div>
+                {% for branch, workflows in release_by_branch.items() %}
+                    {% if branches | length > 1 %}
                     <div class="text-xs opacity-40 mt-1 mb-0.5">{{ branch }}</div>
                     {% endif %}
                     {% for wf in workflows %}
-                    <div class="flex items-center gap-2 py-0.5">
-                        <a href="{{ wf.run_url or wf.url }}" target="_blank" rel="noopener" class="flex items-center gap-2 hover:opacity-80">
-                            {% if wf.status == "success" %}<i class="fa-solid fa-check status-icon status-icon-success"></i>
-                            {% elif wf.status == "failure" %}<i class="fa-solid fa-xmark status-icon status-icon-failure"></i>
-                            {% elif wf.status == "pending" %}<i class="fa-solid fa-clock status-icon status-icon-pending"></i>
-                            {% else %}<i class="fa-solid fa-minus status-icon status-icon-unknown"></i>{% endif %}
-                            <span class="text-sm">{{ wf.name }}</span>
-                        </a>
-                        <span class="text-xs opacity-40">{{ wf.status }}</span>
-                    </div>
+                    {{ workflow_row(wf) }}
                     {% endfor %}
-                {% endfor %}
                 {% else %}
-                <div class="text-xs font-semibold opacity-50 uppercase tracking-wider mb-1">Workflows</div>
-                <p class="text-sm opacity-50">No workflows found.</p>
-                {% endif %}
+                <p class="text-sm opacity-50">No active release workflows.</p>
+                {% endfor %}
             </div>
 
             {# ── Checks Column ── #}
@@ -253,6 +246,5 @@
         </div>
     </div>
 </div>
-{% endif %}
 
 {% endblock %}

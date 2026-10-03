@@ -171,6 +171,7 @@ class CachedWorkflowStatus(SQLModel, table=True):
     status: str  # "success" | "failure" | "pending" | "unknown"
     url: str = ""
     run_url: str = ""
+    kind: str = "release"  # "scheduled" | "release"
     fetched_at: datetime = Field(default_factory=_utcnow)
 
 

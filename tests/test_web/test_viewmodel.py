@@ -19,7 +19,8 @@ def _make_vm(**overrides: object) -> RepoViewModel:
         "check_failures": 0,
         "check_warnings": 0,
         "warnings": [],
-        "workflows_by_branch": {},
+        "scheduled_workflows": [],
+        "release_by_branch": {},
         "checks_by_branch": {},
     }
     defaults.update(overrides)

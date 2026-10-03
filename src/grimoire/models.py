@@ -30,6 +30,7 @@ class WorkflowStatus(BaseModel):
     status: str  # "success" | "failure" | "pending" | "unknown"
     url: str
     run_url: str = ""
+    kind: str = "release"  # "scheduled" (event=schedule) | "release" (event=push)
 
 
 class IssueDetail(BaseModel):

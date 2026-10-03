@@ -99,6 +99,14 @@ repositories:
       exclude: ["Release *"]
 ```
 
+!!! note "Which workflows are shown"
+    After include/exclude filtering, Grimoire only reports two kinds of workflow status:
+
+    - **Scheduled** — the latest `schedule`-triggered run on the default branch.
+    - **Release** — the latest `push`-triggered run on each tracked branch (tag pushes are ignored).
+
+    A workflow is hidden if its latest such run is older than 30 days.
+
 ---
 
 ## `staleness` {: #staleness }

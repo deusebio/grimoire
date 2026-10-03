@@ -303,6 +303,22 @@ async def test_get_workflow_runs_without_branch(client: GitHubClient) -> None:
     assert runs is not None
     assert runs[0]["head_branch"] == "v1.2.3"
     assert "branch" not in route.calls[0].request.url.params
+    assert "event" not in route.calls[0].request.url.params
+
+
+@respx.mock
+async def test_get_workflow_runs_with_event(client: GitHubClient) -> None:
+    route = respx.get("https://api.github.com/repos/owner/repo/actions/workflows/1/runs").mock(
+        return_value=httpx.Response(
+            200,
+            json={"total_count": 0, "workflow_runs": []},
+            headers={"X-RateLimit-Remaining": "4999", "X-RateLimit-Limit": "5000"},
+        )
+    )
+    await client.get_workflow_runs("owner/repo", 1, "main", event="schedule")
+    params = route.calls[0].request.url.params
+    assert params["event"] == "schedule"
+    assert params["branch"] == "main"
 
 
 @respx.mock

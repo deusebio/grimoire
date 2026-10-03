@@ -21,7 +21,10 @@ class GitHubClient:
     async def get_open_issues(self, full_name: str) -> list[dict]: ...
     async def get_open_pull_requests(self, full_name: str) -> list[dict]: ...
     async def get_workflows(self, full_name: str) -> list[dict]: ...
-    async def get_workflow_runs(self, full_name: str, branch: str | None = None) -> list[dict]: ...
+    async def get_workflow_runs(
+        self, full_name: str, workflow_id: int, branch: str | None = None,
+        per_page: int = 1, event: str | None = None,
+    ) -> list[dict]: ...
     async def get_default_branch(self, full_name: str) -> str: ...
     async def get_branches(self, full_name: str) -> list[dict]: ...
     async def get_branch(self, full_name: str, branch: str) -> dict: ...
@@ -48,7 +51,10 @@ The GitHub REST API has a rate limit of 5,000 requests/hour for authenticated us
 **Efficient fetching per resource type:**
 - **Issues:** Use `GET /repos/{owner}/{repo}/issues?state=open&per_page=100`. This returns both issues and PRs mixed together — filter client-side by excluding items that have a `pull_request` key in the JSON. Full list is needed to compute stale counts.
 - **Pull requests:** Use `GET /repos/{owner}/{repo}/pulls?state=open&per_page=100` (the Pulls API, not the Issues API). Full list is needed to compute stale counts.
-- **Workflows:** Use `GET /repos/{owner}/{repo}/actions/workflows` to list workflows, then `GET /repos/{owner}/{repo}/actions/workflows/{id}/runs?branch={branch}&per_page=1` to get only the latest run per workflow+branch. Before fetching runs, apply the repo's `workflow_include`/`workflow_exclude` glob patterns (via `fnmatch`) to skip irrelevant workflows. For the repo's default branch only, also fetch `GET /repos/{owner}/{repo}/actions/workflows/{id}/runs?per_page=10` (no `branch` param), discard any returned run whose `head_branch` matches another *tracked* branch of the same repo (it belongs to that branch, not the default one), and compare `created_at` of the remaining candidates against the branch-filtered result, keeping whichever is more recent. This handles workflows triggered by non-branch events (e.g. `release`, tag pushes): their `head_branch` is a tag, not the default branch, so the branch-filtered query can return an old (or no) run while a newer run is invisible to the filter. Non-default tracked branches never get this extra check: periodic or release-only workflows never actually ran there and must not be shown as if they did.
+- **Workflows:** Use `GET /repos/{owner}/{repo}/actions/workflows` to list workflows. Before fetching runs, apply the repo's `workflow_include`/`workflow_exclude` glob patterns (via `fnmatch`) to skip irrelevant workflows. Only two kinds of workflow status are tracked, each from the latest matching run (`GET /repos/{owner}/{repo}/actions/workflows/{id}/runs?branch={branch}&event={event}&per_page=1`):
+  - **Scheduled** (`kind="scheduled"`): `event=schedule` on the repo's default branch only (scheduled runs always execute there).
+  - **Release** (`kind="release"`): `event=push` on each tracked branch. Tag pushes are not included.
+  - A workflow is only reported if its latest matching run was created within the last `WORKFLOW_ACTIVE_DAYS` (30) days; inactive workflows and workflows never triggered by that event are omitted.
 - Use `per_page=100` on all list endpoints to minimize pagination.
 
 **Note on GraphQL:** GitHub's GraphQL API could batch queries for multiple repos into a single call. This is deferred as a future optimization — REST with ETags is simpler and provides sufficient efficiency. GraphQL has its own rate limiting (point-based), different error model, and adds implementation complexity.
@@ -141,7 +147,7 @@ All fetched data is persisted to the SQLite database as the **persistent cache**
 | `cached_repository` | full_name, default_branch, archived, source, last_commit_at, total_branches, fetched_at |
 | `cached_issue` | repo_full_name, title, number, url, author, created_at, last_comment_at, fetched_at |
 | `cached_pull_request` | repo_full_name, title, number, url, author, created_at, last_push_at, last_comment_at, fetched_at |
-| `cached_workflow_status` | repo_full_name, workflow_name, branch, status, url, run_url, fetched_at |
+| `cached_workflow_status` | repo_full_name, workflow_name, branch, status, url, run_url, kind, fetched_at |
 | `cached_etag` | endpoint_url, etag, last_modified |
 
 Per-repo backlog weights are not persisted in this layer; the backlog engine resolves them from config when scoring items.
@@ -234,6 +240,8 @@ class WorkflowStatusResponse(BaseModel):
     branch: str
     status: str
     url: str
+    run_url: str = ""
+    kind: str = "release"   # "scheduled" | "release"
 
 class RefreshResponse(BaseModel):
     message: str   # "Refresh started"

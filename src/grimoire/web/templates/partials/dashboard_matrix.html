@@ -1,3 +1,4 @@
+{% from "partials/_workflow_macros.html" import workflow_icon %}
 <table class="table table-xs w-full">
     <thead>
         <tr class="text-xs uppercase tracking-wider">
@@ -30,8 +31,8 @@
                 hx-target="#repo-grid" hx-swap="innerHTML">
                 Branches {% if sort == 'branches' %}{% if dir == 'asc' %}▲{% else %}▼{% endif %}{% endif %}
             </th>
-            <th class="text-center py-1">Workflows</th>
-            <th class="text-center py-1">Checks</th>
+            <th class="text-center py-1">Scheduled</th>
+            <th class="text-center py-1">Release</th>
         </tr>
     </thead>
     <tbody>
@@ -69,44 +70,29 @@
                 {{ repo.total_branches }}
             </td>
 
-            {# ── Workflows ── #}
+            {# ── Scheduled ── #}
             <td class="text-center py-0.5">
                 <div class="flex items-center justify-center gap-0.5">
-                    {% for branch, workflows in repo.workflows_by_branch.items() %}
-                        {% for wf in workflows %}
-                        <div class="tooltip tooltip-top" data-tip="{{ wf.name }} ({{ branch }}): {{ wf.status }}">
-                            <a href="{{ wf.run_url or wf.url }}" target="_blank" rel="noopener">
-                                {% if wf.status == "success" %}<i class="fa-solid fa-check status-icon status-icon-success"></i>
-                                {% elif wf.status == "failure" %}<i class="fa-solid fa-xmark status-icon status-icon-failure"></i>
-                                {% elif wf.status == "pending" %}<i class="fa-solid fa-clock status-icon status-icon-pending"></i>
-                                {% else %}<i class="fa-solid fa-minus status-icon status-icon-unknown"></i>{% endif %}
-                            </a>
-                        </div>
-                        {% endfor %}
-                        {% if not loop.last %}<span class="opacity-30 mx-0.5">|</span>{% endif %}
+                    {% for wf in repo.scheduled_workflows %}
+                    <div class="tooltip tooltip-top" data-tip="{{ wf.name }}: {{ wf.status }}">
+                        <a href="{{ wf.run_url or wf.url }}" target="_blank" rel="noopener">{{ workflow_icon(wf) }}</a>
+                    </div>
                     {% endfor %}
                 </div>
             </td>
 
-            {# ── Checks ── #}
+            {# ── Release ── #}
             <td class="text-center py-0.5">
-                {% if repo.checks_by_branch %}
                 <div class="flex items-center justify-center gap-0.5">
-                    {% for branch, checks in repo.checks_by_branch.items() %}
-                        {% for chk in checks %}
-                        <div class="tooltip tooltip-top" data-tip="{{ chk.check_name }} ({{ branch }}): {{ chk.status }}">
-                            <a href="/checks?expand={{ chk.check_slug }}{% if chk.id %}&result={{ chk.id }}{% endif %}#check-card-{{ chk.check_slug }}">
-                            {% if chk.status == "pass" %}<i class="fa-solid fa-check status-icon status-icon-pass"></i>
-                            {% elif chk.status == "fail" and chk.severity == "warning" %}<i class="fa-solid fa-triangle-exclamation status-icon status-icon-pending" title="Warning (non-critical)"></i>
-                            {% elif chk.status == "fail" %}<i class="fa-solid fa-xmark status-icon status-icon-fail"></i>
-                            {% else %}<i class="fa-solid fa-minus status-icon status-icon-not-run"></i>{% endif %}
-                            </a>
+                    {% for branch, workflows in repo.release_by_branch.items() %}
+                        {% for wf in workflows %}
+                        <div class="tooltip tooltip-top" data-tip="{{ wf.name }} ({{ branch }}): {{ wf.status }}">
+                            <a href="{{ wf.run_url or wf.url }}" target="_blank" rel="noopener">{{ workflow_icon(wf) }}</a>
                         </div>
                         {% endfor %}
                         {% if not loop.last %}<span class="opacity-30 mx-0.5">|</span>{% endif %}
                     {% endfor %}
                 </div>
-                {% endif %}
             </td>
         </tr>
         {% endfor %}

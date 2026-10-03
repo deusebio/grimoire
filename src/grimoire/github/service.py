@@ -36,6 +36,8 @@ logger = logging.getLogger(__name__)
 
 _CONCURRENCY_LIMIT = 10
 
+WORKFLOW_ACTIVE_DAYS = 30
+
 
 def _brief_error(exc: Exception) -> str:
     """Return a concise, user-friendly description of a fetch error."""
@@ -122,20 +124,16 @@ async def _resolve_static(
     seen: dict[str, TrackedRepository],
 ) -> None:
     try:
-        data = await client.get_repo(source.repo)
-        if data is None:
-            # 304 cache hit — use the repo name as-is
-            default_branch = "main"
-            archived = False
-        else:
-            default_branch = data.get("default_branch", "main")
-            archived = data.get("archived", False)
+        # A 304 has no body, so skip ETags to always learn the real default branch.
+        data = await client.get_repo(source.repo, use_etag=False) or {}
+        default_branch = data.get("default_branch", "main")
+        archived = data.get("archived", False)
 
         if archived:
             logger.info("Skipping archived repository %s", source.repo)
             return
 
-        branches = source.branches if source.branches else [default_branch]
+        branches = list(dict.fromkeys(source.branches)) if source.branches else [default_branch]
 
         if source.repo in seen:
             existing = seen[source.repo]
@@ -300,15 +298,20 @@ async def fetch_repository_stats(
     # -- Workflows -----------------------------------------------------------
     workflow_statuses: list[WorkflowStatus] = list(previous.workflows) if previous else []
     # Build lookup of previous statuses so we can fall back on 304 cache hits
-    prev_wf_map: dict[tuple[str, str], WorkflowStatus] = {}
+    prev_wf_map: dict[tuple[str, str, str], WorkflowStatus] = {}
     if previous:
         for pw in previous.workflows:
-            prev_wf_map[(pw.name, pw.branch)] = pw
+            prev_wf_map[(pw.name, pw.branch, pw.kind)] = pw
+    # Scheduled runs always execute on the default branch; release runs are
+    # push-triggered runs on any tracked branch.
+    run_queries: list[tuple[str, str, str]] = [("scheduled", "schedule", repo.default_branch)]
+    run_queries += [("release", "push", b) for b in repo.branches]
+    active_cutoff = now - timedelta(days=WORKFLOW_ACTIVE_DAYS)
     try:
         workflows = await client.get_workflows(repo.full_name)
         if workflows is not None:
             workflow_statuses = []  # fresh data, reset
-            for branch in repo.branches:
+            for kind, event, branch in run_queries:
                 for wf in workflows:
                     wf_id = wf.get("id")
                     wf_name = wf.get("name", "unknown")
@@ -319,42 +322,14 @@ async def fetch_repository_stats(
                     ):
                         continue
                     try:
-                        runs = await client.get_workflow_runs(repo.full_name, wf_id, branch)
-                        if runs is not None and branch == repo.default_branch:
-                            # Workflows triggered by non-branch events (e.g. `release`,
-                            # tag pushes) report head_branch as the tag, never the
-                            # tracked branch — so a branch-filtered run can exist but
-                            # be stale (e.g. an old failed run) while newer runs are
-                            # invisible to the filter. For the default branch only,
-                            # compare against the latest run overall and keep whichever
-                            # is more recent. Non-default branches never get this
-                            # fallback: periodic/release-only workflows should not be
-                            # shown as if they ran on branches that never triggered them.
-                            #
-                            # Runs whose head_branch is another *tracked* branch (e.g.
-                            # a release run actually triggered from `track/3.0`) must
-                            # be excluded here — otherwise they'd be misattributed to
-                            # the default branch just because they're the newest.
-                            other_branches = {b for b in repo.branches if b != branch}
-                            unscoped_runs = await client.get_workflow_runs(
-                                repo.full_name, wf_id, per_page=10
-                            )
-                            if unscoped_runs:
-                                candidates = [
-                                    r
-                                    for r in unscoped_runs
-                                    if r.get("head_branch") not in other_branches
-                                ]
-                                latest_unscoped = candidates[0] if candidates else None
-                                latest_branch = runs[0] if runs else None
-                                if latest_unscoped is not None and (
-                                    latest_branch is None
-                                    or _run_created_at(latest_unscoped)
-                                    > _run_created_at(latest_branch)
-                                ):
-                                    runs = [latest_unscoped]
-                        if runs is not None and runs:
+                        runs = await client.get_workflow_runs(
+                            repo.full_name, wf_id, branch, event=event
+                        )
+                        if runs:
                             run = runs[0]
+                            # Workflows without a recent run are considered inactive.
+                            if _run_created_at(run) < active_cutoff:
+                                continue
                             conclusion = run.get("conclusion") or "pending"
                             status_str = _map_conclusion(conclusion)
                             workflow_statuses.append(
@@ -364,11 +339,12 @@ async def fetch_repository_stats(
                                     status=status_str,
                                     url=wf.get("html_url", ""),
                                     run_url=run.get("html_url", ""),
+                                    kind=kind,
                                 )
                             )
                         elif runs is None:
                             # 304 cache hit — preserve previous status if available
-                            prev = prev_wf_map.get((wf_name, branch))
+                            prev = prev_wf_map.get((wf_name, branch, kind))
                             if prev is not None:
                                 workflow_statuses.append(prev)
                     except NotFoundError:
@@ -625,6 +601,7 @@ async def save_stats_to_db(
                         status=wf.status,
                         url=wf.url,
                         run_url=wf.run_url,
+                        kind=wf.kind,
                         fetched_at=stats.fetched_at or now,
                     )
                 )
@@ -703,6 +680,7 @@ async def load_stats_from_db(
                     status=w.status,
                     url=w.url,
                     run_url=w.run_url,
+                    kind=w.kind,
                 )
                 for w in wf_rows
             ]

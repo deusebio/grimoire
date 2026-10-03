@@ -115,8 +115,8 @@ Returns the `partials/loading_progress.html` template with current `RefreshProgr
 | **Pull Requests** | Open count + stale count, e.g., `5 (1 stale)` | ✓ (by open, by stale) |
 | **Last Activity** | Time since last commit across observed branches, e.g., `3d ago` | ✓ (by last commit time) |
 | **Branches** | Total count + stale count with link to GitHub branches page | — |
-| **Workflows** | Compact badge grid (see below) | ✓ (by number of failures) |
-| **Checks** | Compact badge grid (see below) | ✓ (by number of failures) |
+| **Scheduled** | Compact badge grid of scheduled workflows on the default branch (see below) | — |
+| **Release** | Compact badge grid of push-triggered workflows per tracked branch (see below) | — |
 
 ### View Switcher
 
@@ -125,7 +125,7 @@ The dashboard supports three view modes, selectable via a button group next to t
 | View | Partial Endpoint | Description |
 |------|-----------------|-------------|
 | **Grid** | `GET /partials/dashboard-cards` | Card grid (current default). 3 columns on XL, 2 on MD, 1 on mobile. Best for ≤20 repos. |
-| **List** | `GET /partials/dashboard-list` | Expanded one-repo-per-row layout. Each item shows: repo name with stats (issues, PRs, staleness), tracked branches, last activity, GitHub link. Below the header, a two-column grid lists workflows (left) and checks (right) by name with status dot and label. |
+| **List** | `GET /partials/dashboard-list` | Expanded one-repo-per-row layout. Each item shows: repo name with stats (issues, PRs, staleness), tracked branches, last activity, GitHub link. Below the header, a two-column grid lists **Scheduled** workflows (left, default branch) and **Release** workflows (right, grouped by branch when multiple are tracked) by name with status icon and label. Grimoire check results are not shown here (see the Checks page and repo detail page). |
 | **Table** | `GET /partials/dashboard-table` | Data table with sortable column headers. Maximum density for 50+ repos. Columns: Repo, Issues, PRs, Workflows, Last Activity, Branches. |
 
 **Extensibility:** Each view is a self-contained Jinja2 partial template that controls its own layout. The `#repo-grid` container is layout-agnostic. Adding a new view requires: (1) creating a partial template, (2) adding a router endpoint, (3) registering the view in the `VIEW_PARTIALS` JS object in `dashboard.html`.
@@ -175,7 +175,7 @@ When a repo has a single observed branch, omit the branch label for compactness.
 
 ### Check visualization (compact)
 
-Same visual style as workflows: colored FontAwesome icons, one per applicable check.
+Used on the repository detail page (checks are not shown in the dashboard List/Table views). Same visual style as workflows: colored FontAwesome icons, one per applicable check.
 
 Icons:
 - `fa-check` (green) — pass
@@ -267,9 +267,9 @@ This pattern is shared across all long-running operations:
 | # | Title | Author | Last Activity |
 |---|-------|--------|---------------|
 
-**5. Workflows & Checks (two-column card)**
-- Combined into a single card with a two-column grid layout (workflows left, checks right).
-- Each column has a header with a breakdown summary: `X passing · Y warning/pending · Z failing` (success → warnings → failures order), using status icons.
+**5. Scheduled, Release & Checks (three-column card)**
+- Combined into a single card with a three-column grid layout: Scheduled workflows (default branch), Release workflows (push-triggered, per tracked branch), and Grimoire checks.
+- Each column has a header with a breakdown summary: `X passing · Y warning/pending · Z failing` (success → warnings → failures order), using status icons. Workflow summaries are rendered via the `workflow_summary` macro in `partials/_workflow_macros.html`.
 - Flat list per column — one row per item with status icon, name, status text, and link.
 - Branch labels shown only when multiple branches are tracked.
 - Check rows include an "Output" button (HTMX `hx-get` to fetch full output on demand).

@@ -87,7 +87,8 @@ class RepoViewModel:
     check_failures: int
     check_warnings: int
     warnings: list[str]
-    workflows_by_branch: dict[str, list[WorkflowStatus]]
+    scheduled_workflows: list[WorkflowStatus]
+    release_by_branch: dict[str, list[WorkflowStatus]]
     checks_by_branch: dict[str, list[dict[str, Any]]]
     fetched_at: datetime | None = None
     last_commit_at: datetime | None = None
@@ -116,7 +117,9 @@ class RepoViewModel:
 
     @property
     def total_workflows(self) -> int:
-        return sum(len(wfs) for wfs in self.workflows_by_branch.values())
+        return len(self.scheduled_workflows) + sum(
+            len(wfs) for wfs in self.release_by_branch.values()
+        )
 
     @property
     def total_checks(self) -> int:
@@ -420,6 +423,20 @@ def _build_checks_for_repo(
     return checks_by_branch, check_failures, check_warnings
 
 
+def _split_workflows(
+    workflows: list[WorkflowStatus],
+) -> tuple[list[WorkflowStatus], dict[str, list[WorkflowStatus]]]:
+    """Split workflows into scheduled ones and release ones grouped by branch."""
+    scheduled: list[WorkflowStatus] = []
+    release_by_branch: dict[str, list[WorkflowStatus]] = {}
+    for wf in workflows:
+        if wf.kind == "scheduled":
+            scheduled.append(wf)
+        else:
+            release_by_branch.setdefault(wf.branch, []).append(wf)
+    return scheduled, release_by_branch
+
+
 async def _build_repo_viewmodels(
     include_checks: bool = True, include_stale: bool = True
 ) -> list[RepoViewModel]:
@@ -436,10 +453,7 @@ async def _build_repo_viewmodels(
 
         branches = repo.branches or [stats.default_branch]
 
-        # Group workflows by branch
-        workflows_by_branch: dict[str, list[WorkflowStatus]] = {}
-        for wf in stats.workflows:
-            workflows_by_branch.setdefault(wf.branch, []).append(wf)
+        scheduled_workflows, release_by_branch = _split_workflows(stats.workflows)
 
         # Count workflow failures
         workflow_failures = sum(1 for w in stats.workflows if w.status == "failure")
@@ -462,7 +476,8 @@ async def _build_repo_viewmodels(
                 check_failures=check_failures,
                 check_warnings=check_warnings,
                 warnings=stats.warnings,
-                workflows_by_branch=workflows_by_branch,
+                scheduled_workflows=scheduled_workflows,
+                release_by_branch=release_by_branch,
                 checks_by_branch=checks_by_branch,
                 fetched_at=stats.fetched_at,
                 last_commit_at=stats.last_commit_at,
@@ -564,12 +579,7 @@ async def repository_detail(request: Request, owner: str, name: str) -> HTMLResp
 
     branches = repo.branches or [stats.default_branch]
 
-    workflows_by_branch: dict[str, list[WorkflowStatus]] = {}
-    for wf in stats.workflows:
-        workflows_by_branch.setdefault(wf.branch, []).append(wf)
-
-    workflow_failures = sum(1 for w in stats.workflows if w.status == "failure")
-    workflow_pending = sum(1 for w in stats.workflows if w.status == "pending")
+    scheduled_workflows, release_by_branch = _split_workflows(stats.workflows)
 
     check_targets, results_by_key = await _load_check_context({full_name: repo})
     checks_by_branch, check_failures, check_warnings = _build_checks_for_repo(
@@ -584,10 +594,9 @@ async def repository_detail(request: Request, owner: str, name: str) -> HTMLResp
             "stats": stats,
             "repo": repo,
             "branches": branches,
-            "workflows_by_branch": workflows_by_branch,
+            "scheduled_workflows": scheduled_workflows,
+            "release_by_branch": release_by_branch,
             "checks_by_branch": checks_by_branch,
-            "workflow_failures": workflow_failures,
-            "workflow_pending": workflow_pending,
             "check_failures": check_failures,
             "check_warnings": check_warnings,
             "staleness": _staleness_config,

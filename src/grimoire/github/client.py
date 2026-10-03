@@ -114,9 +114,9 @@ class GitHubClient:
         )
         return result if result is not None else []
 
-    async def get_repo(self, full_name: str) -> dict[str, Any] | None:
+    async def get_repo(self, full_name: str, use_etag: bool = True) -> dict[str, Any] | None:
         owner, repo = full_name.split("/", 1)
-        return await self._request("GET", f"/repos/{owner}/{repo}")
+        return await self._request("GET", f"/repos/{owner}/{repo}", use_etag=use_etag)
 
     async def get_open_issues(self, full_name: str) -> list[dict[str, Any]] | None:
         """Return open issues, filtering OUT pull requests."""
@@ -152,22 +152,24 @@ class GitHubClient:
         return data.get("workflows", [])
 
     async def get_workflow_runs(
-        self, full_name: str, workflow_id: int, branch: str | None = None, per_page: int = 1
+        self,
+        full_name: str,
+        workflow_id: int,
+        branch: str | None = None,
+        per_page: int = 1,
+        event: str | None = None,
     ) -> list[dict[str, Any]] | None:
         """Return the latest run(s) for a workflow.
 
-        If *branch* is given, filter to runs whose ``head_branch`` matches it
-        (GitHub's server-side filter). If *branch* is ``None``, return the
-        latest runs regardless of branch — needed for workflows triggered by
-        non-branch events (e.g. ``release``, tag pushes), whose ``head_branch``
-        never matches a tracked branch like ``main``. Pass a larger *per_page*
-        in the unscoped case to allow filtering out runs that actually belong
-        to another tracked branch.
+        *branch* filters on the run's ``head_branch`` and *event* on the
+        triggering event (e.g. ``schedule``, ``push``), both server-side.
         """
         owner, repo = full_name.split("/", 1)
         params: dict[str, Any] = {"per_page": per_page}
         if branch is not None:
             params["branch"] = branch
+        if event is not None:
+            params["event"] = event
         # Skip ETag caching: a run's conclusion/status can change without the
         # run list identity changing (same run ID, updated fields).  ETag-based
         # 304 responses would hide status transitions (e.g. in_progress → success).

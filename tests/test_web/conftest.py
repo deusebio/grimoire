@@ -55,6 +55,14 @@ def _populate_cache() -> None:
                     url="https://github.com/acme/api/actions",
                     run_url="https://github.com/acme/api/actions/runs/1",
                 ),
+                WorkflowStatus(
+                    name="Nightly",
+                    branch="main",
+                    status="success",
+                    url="https://github.com/acme/api/actions",
+                    run_url="https://github.com/acme/api/actions/runs/2",
+                    kind="scheduled",
+                ),
             ],
             stale_issue_items=[
                 IssueDetail(

@@ -419,32 +419,37 @@ class TestCheckOutputPartial:
 class TestCheckDisplay:
     """Tests for check display across dashboard views."""
 
-    async def test_matrix_show_check_icons(self, web_client_with_checks: AsyncClient) -> None:
+    async def test_matrix_hides_checks(self, web_client_with_checks: AsyncClient) -> None:
         resp = await web_client_with_checks.get("/partials/dashboard-matrix?sort=name&dir=asc")
         assert resp.status_code == 200
-        assert "Checks" in resp.text
-        assert "status-icon-pass" in resp.text
-        assert "status-icon-fail" in resp.text
+        assert ">Checks<" not in resp.text
+        assert "check-card-" not in resp.text
 
-    async def test_matrix_show_not_run_checks(self, web_client_with_checks: AsyncClient) -> None:
-        """Watchdog targets both repos but only has results for some branches."""
-        resp = await web_client_with_checks.get("/partials/dashboard-matrix?sort=name&dir=asc")
-        assert "status-icon-not-run" in resp.text
-
-    async def test_list_show_check_dots(self, web_client_with_checks: AsyncClient) -> None:
+    async def test_list_hides_checks(self, web_client_with_checks: AsyncClient) -> None:
         resp = await web_client_with_checks.get("/partials/dashboard-list?sort=name&dir=asc")
         assert resp.status_code == 200
-        assert "status-icon-pass" in resp.text
-        assert "status-icon-fail" in resp.text
+        assert "check-card-" not in resp.text
 
-    async def test_matrix_show_check_icons_for_checks(
-        self, web_client_with_checks: AsyncClient
-    ) -> None:
-        resp = await web_client_with_checks.get("/partials/dashboard-matrix?sort=name&dir=asc")
-        assert resp.status_code == 200
-        assert ">Checks<" in resp.text
-        assert "status-icon-pass" in resp.text
-        assert "status-icon-fail" in resp.text
+    async def test_matrix_shows_scheduled_and_release(self, web_client: AsyncClient) -> None:
+        resp = await web_client.get("/partials/dashboard-matrix?sort=name&dir=asc")
+        assert ">Scheduled<" in resp.text
+        assert ">Release<" in resp.text
+        assert "Nightly: success" in resp.text
+        assert "CI (main): success" in resp.text
+
+    async def test_list_shows_scheduled_and_release(self, web_client: AsyncClient) -> None:
+        resp = await web_client.get("/partials/dashboard-list?sort=name&dir=asc")
+        assert "Scheduled" in resp.text
+        assert "Release" in resp.text
+        assert "Nightly" in resp.text
+        assert "status-icon-failure" in resp.text
+
+    async def test_repo_detail_shows_scheduled_and_release(self, web_client: AsyncClient) -> None:
+        resp = await web_client.get("/repo/acme/api")
+        assert "Scheduled" in resp.text
+        assert "Release" in resp.text
+        assert "Nightly" in resp.text
+        assert "actions/runs/2" in resp.text
 
     async def test_repo_detail_shows_checks(self, web_client_with_checks: AsyncClient) -> None:
         resp = await web_client_with_checks.get("/repo/acme/api")

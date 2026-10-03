@@ -161,6 +161,8 @@ class WorkflowStatus(BaseModel):
     branch: str
     status: str             # "success" | "failure" | "pending" | "unknown"
     url: str
+    run_url: str = ""
+    kind: str = "release"   # "scheduled" (event=schedule) | "release" (event=push)
 
 class RepositoryStats(BaseModel):
     full_name: str

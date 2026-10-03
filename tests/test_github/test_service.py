@@ -30,6 +30,7 @@ from grimoire.database import (
 )
 from grimoire.github.client import GitHubClient
 from grimoire.github.service import (
+    WORKFLOW_ACTIVE_DAYS,
     fetch_repository_stats,
     load_stats_from_db,
     prune_stale_data,
@@ -116,6 +117,29 @@ async def test_resolve_static_uses_default_branch(client: GitHubClient) -> None:
     repos = await resolve_repositories(config, client)
     assert len(repos) == 1
     assert repos[0].branches == ["develop"]
+
+
+@respx.mock
+async def test_resolve_static_keeps_default_branch_on_repeat(client: GitHubClient) -> None:
+    """Repeated resolution must not degrade default_branch to a placeholder via ETag 304s."""
+
+    def _side_effect(request: httpx.Request) -> httpx.Response:
+        if "If-None-Match" in request.headers:
+            return httpx.Response(304, headers=_rl_headers())
+        return httpx.Response(
+            200,
+            json={"full_name": "owner/repo1", "default_branch": "3/edge", "archived": False},
+            headers={**_rl_headers(), "ETag": '"abc"'},
+        )
+
+    respx.get("https://api.github.com/repos/owner/repo1").mock(side_effect=_side_effect)
+    config = _make_config(
+        repos=[StaticRepoSource(repo="owner/repo1", branches=["3/edge", "3/edge"])]
+    )
+    await resolve_repositories(config, client)
+    repos = await resolve_repositories(config, client)
+    assert repos[0].default_branch == "3/edge"
+    assert repos[0].branches == ["3/edge"]
 
 
 @respx.mock
@@ -314,6 +338,7 @@ async def test_save_and_load_stats(engine: AsyncEngine) -> None:
                     status="success",
                     url="https://github.com/owner/repo1/actions/workflows/ci.yml",
                     run_url="https://github.com/owner/repo1/actions/runs/123",
+                    kind="scheduled",
                 )
             ],
             fetched_at=now,
@@ -345,6 +370,7 @@ async def test_save_and_load_stats(engine: AsyncEngine) -> None:
     assert loaded_repos[0].branches == ["main", "develop"]
     assert len(loaded_stats) == 1
     assert loaded_stats[0].workflows[0].name == "CI"
+    assert loaded_stats[0].workflows[0].kind == "scheduled"
     assert loaded_stats[0].total_branches == 5
     assert loaded_stats[0].last_commit_at is not None
 
@@ -494,11 +520,8 @@ def _rl_headers() -> dict[str, str]:
     return {"X-RateLimit-Remaining": "4999", "X-RateLimit-Limit": "5000"}
 
 
-@respx.mock
-async def test_workflow_runs_falls_back_when_branch_filter_empty(client: GitHubClient) -> None:
-    """Non-branch-triggered workflows (e.g. `release`) have no runs matching a
-    tracked branch's head_branch. Grimoire should fall back to the latest run
-    overall and report it under the configured branch."""
+def _mock_repo_endpoints(branches: list[str]) -> None:
+    """Mock issues/PRs/workflows/branches for owner/repo1 with one workflow (id 42)."""
     respx.get("https://api.github.com/repos/owner/repo1/issues").mock(
         return_value=httpx.Response(200, json=[], headers=_rl_headers())
     )
@@ -510,339 +533,124 @@ async def test_workflow_runs_falls_back_when_branch_filter_empty(client: GitHubC
             200,
             json={
                 "total_count": 1,
-                "workflows": [{"id": 42, "name": "Release", "html_url": "https://github.com/wf"}],
+                "workflows": [{"id": 42, "name": "CI", "html_url": "https://github.com/wf"}],
             },
             headers=_rl_headers(),
         )
     )
-
-    route = respx.get("https://api.github.com/repos/owner/repo1/actions/workflows/42/runs")
-    route.side_effect = [
-        # First call (branch=main filter) returns no runs
-        httpx.Response(200, json={"total_count": 0, "workflow_runs": []}, headers=_rl_headers()),
-        # Fallback call (no branch filter) returns the latest release run
-        httpx.Response(
-            200,
-            json={
-                "total_count": 1,
-                "workflow_runs": [
-                    {
-                        "id": 999,
-                        "conclusion": "success",
-                        "html_url": "https://github.com/run/999",
-                        "head_branch": "v1.2.3",
-                        "created_at": "2026-01-01T00:00:00Z",
-                    }
-                ],
-            },
-            headers=_rl_headers(),
-        ),
-    ]
-
-    respx.get("https://api.github.com/repos/owner/repo1/branches/main").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "name": "main",
-                "commit": {
-                    "sha": "abc",
-                    "commit": {"committer": {"date": datetime.now(UTC).isoformat()}},
-                },
-            },
-            headers=_rl_headers(),
+    for branch in branches:
+        respx.get(f"https://api.github.com/repos/owner/repo1/branches/{branch}").mock(
+            return_value=httpx.Response(200, json={"name": branch}, headers=_rl_headers())
         )
-    )
     respx.get("https://api.github.com/repos/owner/repo1/branches").mock(
         return_value=httpx.Response(200, json=[], headers=_rl_headers())
     )
 
-    repo = TrackedRepository(full_name="owner/repo1", default_branch="main", branches=["main"])
-    staleness = StalenessConfig()
-    stats = await fetch_repository_stats(repo, client, staleness)
 
-    assert len(stats.workflows) == 1
-    assert stats.workflows[0].name == "Release"
-    assert stats.workflows[0].branch == "main"
-    assert stats.workflows[0].status == "success"
-    assert stats.workflows[0].run_url == "https://github.com/run/999"
+def _runs_response(runs: list[dict[str, object]]) -> httpx.Response:
+    return httpx.Response(
+        200, json={"total_count": len(runs), "workflow_runs": runs}, headers=_rl_headers()
+    )
 
-    calls = route.calls
-    assert len(calls) == 2
-    assert "branch" in calls[0].request.url.params
-    assert "branch" not in calls[1].request.url.params
+
+def _run(run_id: int, conclusion: str, age_days: float) -> dict[str, object]:
+    created = datetime.now(UTC) - timedelta(days=age_days)
+    return {
+        "id": run_id,
+        "conclusion": conclusion,
+        "html_url": f"https://github.com/run/{run_id}",
+        "created_at": created.isoformat(),
+    }
 
 
 @respx.mock
-async def test_workflow_runs_prefers_newer_unscoped_run_over_stale_branch_match(
-    client: GitHubClient,
-) -> None:
-    """A workflow can have an old run whose head_branch happens to equal the
-    default branch (e.g. an old failed release run), while newer runs are
-    invisible to the branch filter because they were triggered from a tag.
-    Grimoire must report the newer run, not the stale branch-matched one."""
-    respx.get("https://api.github.com/repos/owner/repo1/issues").mock(
-        return_value=httpx.Response(200, json=[], headers=_rl_headers())
-    )
-    respx.get("https://api.github.com/repos/owner/repo1/pulls").mock(
-        return_value=httpx.Response(200, json=[], headers=_rl_headers())
-    )
-    respx.get("https://api.github.com/repos/owner/repo1/actions/workflows").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "total_count": 1,
-                "workflows": [{"id": 42, "name": "Release", "html_url": "https://github.com/wf"}],
-            },
-            headers=_rl_headers(),
-        )
-    )
+async def test_workflow_runs_split_by_event(client: GitHubClient) -> None:
+    """Schedule-triggered runs become 'scheduled', push-triggered runs 'release'."""
+    _mock_repo_endpoints(["main"])
+
+    def _side_effect(request: httpx.Request) -> httpx.Response:
+        event = request.url.params.get("event")
+        if event == "schedule":
+            return _runs_response([_run(1, "success", 1)])
+        if event == "push":
+            return _runs_response([_run(2, "failure", 2)])
+        return _runs_response([])
 
     route = respx.get("https://api.github.com/repos/owner/repo1/actions/workflows/42/runs")
-    route.side_effect = [
-        # branch=main filter: an old failed run whose head_branch is genuinely "main"
-        httpx.Response(
-            200,
-            json={
-                "total_count": 1,
-                "workflow_runs": [
-                    {
-                        "id": 100,
-                        "conclusion": "failure",
-                        "html_url": "https://github.com/run/100",
-                        "head_branch": "main",
-                        "created_at": "2025-10-13T08:29:41Z",
-                    }
-                ],
-            },
-            headers=_rl_headers(),
-        ),
-        # unscoped fallback: the actual latest run, triggered from a tag
-        httpx.Response(
-            200,
-            json={
-                "total_count": 1,
-                "workflow_runs": [
-                    {
-                        "id": 999,
-                        "conclusion": "success",
-                        "html_url": "https://github.com/run/999",
-                        "head_branch": "v4.1.3",
-                        "created_at": "2026-08-12T13:47:32Z",
-                    }
-                ],
-            },
-            headers=_rl_headers(),
-        ),
-    ]
-
-    respx.get("https://api.github.com/repos/owner/repo1/branches/main").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "name": "main",
-                "commit": {
-                    "sha": "abc",
-                    "commit": {"committer": {"date": datetime.now(UTC).isoformat()}},
-                },
-            },
-            headers=_rl_headers(),
-        )
-    )
-    respx.get("https://api.github.com/repos/owner/repo1/branches").mock(
-        return_value=httpx.Response(200, json=[], headers=_rl_headers())
-    )
+    route.side_effect = _side_effect
 
     repo = TrackedRepository(full_name="owner/repo1", default_branch="main", branches=["main"])
-    staleness = StalenessConfig()
-    stats = await fetch_repository_stats(repo, client, staleness)
+    stats = await fetch_repository_stats(repo, client, StalenessConfig())
 
-    assert len(stats.workflows) == 1
-    assert stats.workflows[0].status == "success"
-    assert stats.workflows[0].run_url == "https://github.com/run/999"
+    by_kind = {wf.kind: wf for wf in stats.workflows}
+    assert len(stats.workflows) == 2
+    assert by_kind["scheduled"].status == "success"
+    assert by_kind["scheduled"].run_url == "https://github.com/run/1"
+    assert by_kind["release"].status == "failure"
+    assert by_kind["release"].run_url == "https://github.com/run/2"
+    for call in route.calls:
+        assert call.request.url.params["branch"] == "main"
 
 
 @respx.mock
-async def test_workflow_runs_does_not_misattribute_other_branch_run_to_default(
-    client: GitHubClient,
-) -> None:
-    """A newer run triggered on a non-default tracked branch (e.g. `track/3.0`)
-    must not be reported as the default branch's status just because it's the
-    newest run overall."""
-    respx.get("https://api.github.com/repos/owner/repo1/issues").mock(
-        return_value=httpx.Response(200, json=[], headers=_rl_headers())
-    )
-    respx.get("https://api.github.com/repos/owner/repo1/pulls").mock(
-        return_value=httpx.Response(200, json=[], headers=_rl_headers())
-    )
-    respx.get("https://api.github.com/repos/owner/repo1/actions/workflows").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "total_count": 1,
-                "workflows": [{"id": 42, "name": "Release", "html_url": "https://github.com/wf"}],
-            },
-            headers=_rl_headers(),
-        )
+async def test_workflow_runs_inactive_are_excluded(client: GitHubClient) -> None:
+    """Workflows whose latest qualifying run is older than 30 days are hidden."""
+    _mock_repo_endpoints(["main"])
+    respx.get("https://api.github.com/repos/owner/repo1/actions/workflows/42/runs").mock(
+        return_value=_runs_response([_run(1, "failure", WORKFLOW_ACTIVE_DAYS + 1)])
     )
 
-    route = respx.get("https://api.github.com/repos/owner/repo1/actions/workflows/42/runs")
+    repo = TrackedRepository(full_name="owner/repo1", default_branch="main", branches=["main"])
+    stats = await fetch_repository_stats(repo, client, StalenessConfig())
+
+    assert stats.workflows == []
+
+
+@respx.mock
+async def test_workflow_runs_without_matching_event_are_omitted(client: GitHubClient) -> None:
+    """A workflow never triggered by schedule/push (e.g. PR-only CI) is not shown."""
+    _mock_repo_endpoints(["main"])
+    respx.get("https://api.github.com/repos/owner/repo1/actions/workflows/42/runs").mock(
+        return_value=_runs_response([])
+    )
+
+    repo = TrackedRepository(full_name="owner/repo1", default_branch="main", branches=["main"])
+    stats = await fetch_repository_stats(repo, client, StalenessConfig())
+
+    assert stats.workflows == []
+
+
+@respx.mock
+async def test_workflow_runs_scheduled_only_on_default_branch(client: GitHubClient) -> None:
+    """Scheduled runs are queried on the default branch only; release runs on
+    every tracked branch."""
+    _mock_repo_endpoints(["main", "track/3.0"])
 
     def _side_effect(request: httpx.Request) -> httpx.Response:
         params = request.url.params
-        if params.get("branch") == "main":
-            return httpx.Response(
-                200,
-                json={
-                    "total_count": 1,
-                    "workflow_runs": [
-                        {
-                            "id": 100,
-                            "conclusion": "success",
-                            "html_url": "https://github.com/run/100",
-                            "head_branch": "main",
-                            "created_at": "2026-08-01T00:00:00Z",
-                        }
-                    ],
-                },
-                headers=_rl_headers(),
-            )
-        if params.get("branch") == "track/3.0":
-            return httpx.Response(
-                200,
-                json={
-                    "total_count": 1,
-                    "workflow_runs": [
-                        {
-                            "id": 200,
-                            "conclusion": "failure",
-                            "html_url": "https://github.com/run/200",
-                            "head_branch": "track/3.0",
-                            "created_at": "2026-08-20T00:00:00Z",
-                        }
-                    ],
-                },
-                headers=_rl_headers(),
-            )
-        # Unscoped fallback query (only for default branch): the latest run
-        # overall is actually the track/3.0 failure, newer than main's success.
-        return httpx.Response(
-            200,
-            json={
-                "total_count": 1,
-                "workflow_runs": [
-                    {
-                        "id": 200,
-                        "conclusion": "failure",
-                        "html_url": "https://github.com/run/200",
-                        "head_branch": "track/3.0",
-                        "created_at": "2026-08-20T00:00:00Z",
-                    }
-                ],
-            },
-            headers=_rl_headers(),
-        )
+        if params.get("event") == "push" and params.get("branch") == "track/3.0":
+            return _runs_response([_run(3, "failure", 1)])
+        return _runs_response([_run(4, "success", 1)])
 
+    route = respx.get("https://api.github.com/repos/owner/repo1/actions/workflows/42/runs")
     route.side_effect = _side_effect
-
-    respx.get("https://api.github.com/repos/owner/repo1/branches/main").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "name": "main",
-                "commit": {
-                    "sha": "abc",
-                    "commit": {"committer": {"date": datetime.now(UTC).isoformat()}},
-                },
-            },
-            headers=_rl_headers(),
-        )
-    )
-    respx.get("https://api.github.com/repos/owner/repo1/branches/track/3.0").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "name": "track/3.0",
-                "commit": {
-                    "sha": "def",
-                    "commit": {"committer": {"date": datetime.now(UTC).isoformat()}},
-                },
-            },
-            headers=_rl_headers(),
-        )
-    )
-    respx.get("https://api.github.com/repos/owner/repo1/branches").mock(
-        return_value=httpx.Response(200, json=[], headers=_rl_headers())
-    )
 
     repo = TrackedRepository(
         full_name="owner/repo1", default_branch="main", branches=["main", "track/3.0"]
     )
-    staleness = StalenessConfig()
-    stats = await fetch_repository_stats(repo, client, staleness)
+    stats = await fetch_repository_stats(repo, client, StalenessConfig())
 
-    by_branch = {wf.branch: wf for wf in stats.workflows}
-    assert len(stats.workflows) == 2
-    assert by_branch["main"].status == "success"
-    assert by_branch["main"].run_url == "https://github.com/run/100"
-    assert by_branch["track/3.0"].status == "failure"
-    assert by_branch["track/3.0"].run_url == "https://github.com/run/200"
+    queried = {
+        (c.request.url.params["event"], c.request.url.params["branch"]) for c in route.calls
+    }
+    assert queried == {("schedule", "main"), ("push", "main"), ("push", "track/3.0")}
 
-
-@respx.mock
-async def test_workflow_runs_no_fallback_for_non_default_branch(client: GitHubClient) -> None:
-    """Periodic/release-only workflows must not appear under non-default
-    tracked branches, since they never actually ran there."""
-    respx.get("https://api.github.com/repos/owner/repo1/issues").mock(
-        return_value=httpx.Response(200, json=[], headers=_rl_headers())
-    )
-    respx.get("https://api.github.com/repos/owner/repo1/pulls").mock(
-        return_value=httpx.Response(200, json=[], headers=_rl_headers())
-    )
-    respx.get("https://api.github.com/repos/owner/repo1/actions/workflows").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "total_count": 1,
-                "workflows": [{"id": 42, "name": "Update", "html_url": "https://github.com/wf"}],
-            },
-            headers=_rl_headers(),
-        )
-    )
-
-    route = respx.get("https://api.github.com/repos/owner/repo1/actions/workflows/42/runs")
-    route.mock(
-        return_value=httpx.Response(
-            200, json={"total_count": 0, "workflow_runs": []}, headers=_rl_headers()
-        )
-    )
-
-    respx.get("https://api.github.com/repos/owner/repo1/branches/feature").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "name": "feature",
-                "commit": {
-                    "sha": "abc",
-                    "commit": {"committer": {"date": datetime.now(UTC).isoformat()}},
-                },
-            },
-            headers=_rl_headers(),
-        )
-    )
-    respx.get("https://api.github.com/repos/owner/repo1/branches").mock(
-        return_value=httpx.Response(200, json=[], headers=_rl_headers())
-    )
-
-    repo = TrackedRepository(full_name="owner/repo1", default_branch="main", branches=["feature"])
-    staleness = StalenessConfig()
-    stats = await fetch_repository_stats(repo, client, staleness)
-
-    # No workflow status should be recorded for the non-default branch
-    assert len(stats.workflows) == 0
-
-    calls = route.calls
-    assert len(calls) == 1
-    assert "branch" in calls[0].request.url.params
+    keyed = {(wf.kind, wf.branch): wf.status for wf in stats.workflows}
+    assert keyed == {
+        ("scheduled", "main"): "success",
+        ("release", "main"): "success",
+        ("release", "track/3.0"): "failure",
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -39,6 +39,7 @@ class WorkflowStatusResponse(BaseModel):
     status: str
     url: str
     run_url: str = ""
+    kind: str = "release"
 
 
 class RepoSummary(BaseModel):
