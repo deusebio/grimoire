@@ -1,0 +1,32 @@
+github:
+  token: "${GITHUB_TOKEN}"
+
+repositories:
+  # Individual repo with specific branches
+  - repo: "canonical/spark-k8s-toolkit-py"
+  - repo: "canonical/spark-client-snap"
+    branches: ["3.5/edge", "3.4/edge", "4.0/edge"]
+  - repo: "canonical/kyuubi-k8s-operator"
+    branches: ["3.5/edge", "3.4/edge", "4.0/edge"]
+  - repo: "canonical/charmed-spark-rock"
+    branches: ["3.5/edge", "3.4/edge", "4.0/edge"]
+  - repo: "canonical/spark-integration-hub-rock"
+    branches: ["3/edge"]
+  - repo: "canonical/spark-integration-hub-k8s-operator"
+    branches: ["3/edge", "4/edge"]
+  - repo: "canonical/spark-history-server-k8s-operator"
+    branches: ["3/edge", "3/edge"]
+
+staleness:
+  pull_requests_days: 30   # PRs with no push/comment for this many days
+  issues_days: 365         # Issues with no comment for this many days
+
+  problematic_stale_issues_pct: 20
+  problematic_stale_prs_pct: 20
+
+refresh_schedule: "*/5 * * * *"
+
+data_dir: "./data"           # Contains checks/ and actions/ subdirectories
+workspace_dir: "./workspace" # Where repos are cloned
+database_path: "./grimoire.db"
+log_file: "./grimoire.log"
